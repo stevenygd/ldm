@@ -5,7 +5,9 @@
 # LICENSE file in the root directory of this source tree.
 
 """
-A minimal training script for DiT using PyTorch DDP.
+Extract features from a pre-trained VAE and save them to npy files.
+example usage:
+    torchrun extract2npy.py --data-path /mnt/disks/vae/.cache/autoencoders/data/ILSVRC2012_train/data --features-path data/features --checkpoint-dir /mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt
 """
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
@@ -20,9 +22,6 @@ from torchvision import transforms
 import numpy as np
 from collections import OrderedDict
 from PIL import Image
-from copy import deepcopy
-from glob import glob
-from time import time
 import argparse
 import logging
 import os
@@ -30,56 +29,6 @@ import tqdm
 
 from ldm.util import instantiate_from_config
 from omegaconf import OmegaConf, DictConfig
-
-#################################################################################
-#                             Training Helper Functions                         #
-#################################################################################
-
-@torch.no_grad()
-def update_ema(ema_model, model, decay=0.9999):
-    """
-    Step the EMA model towards the current model.
-    """
-    ema_params = OrderedDict(ema_model.named_parameters())
-    model_params = OrderedDict(model.named_parameters())
-    
-    for name, param in model_params.items():
-        # TODO: Consider applying only to params that require_grad to avoid small numerical changes of pos_embed
-        ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
-
-
-def requires_grad(model, flag=True):
-    """
-    Set requires_grad flag for all parameters in a model.
-    """
-    for p in model.parameters():
-        p.requires_grad = flag
-
-
-def cleanup():
-    """
-    End DDP training.
-    """
-    dist.destroy_process_group()
-
-
-def create_logger(logging_dir):
-    """
-    Create a logger that writes to a log file and stdout.
-    """
-    if dist.get_rank() == 0:  # real logger
-        logging.basicConfig(
-            level=logging.INFO,
-            format='[\033[34m%(asctime)s\033[0m] %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
-            handlers=[logging.StreamHandler(), logging.FileHandler(f"{logging_dir}/log.txt")]
-        )
-        logger = logging.getLogger(__name__)
-    else:  # dummy logger (does nothing)
-        logger = logging.getLogger(__name__)
-        logger.addHandler(logging.NullHandler())
-    return logger
-
 
 def center_crop_arr(pil_image, image_size):
     """
@@ -102,40 +51,6 @@ def center_crop_arr(pil_image, image_size):
     return Image.fromarray(arr[crop_y: crop_y + image_size, crop_x: crop_x + image_size])
 
 
-#################################################################################
-#                                  Training Loop                                #
-#################################################################################
-
-def benchmark_reading_tf_dataset(record_file):
-  """
-    [record_file] is a pattern of <dir_name>/%0.5d-of-%0.5d.tfrecords
-  """
-  files = tf.io.matching_files(record_file)
-  files = tf.random.shuffle(files)
-  shards = tf.data.Dataset.from_tensor_slices(files)
-  raw_ds = shards.interleave(tf.data.TFRecordDataset)
-  raw_ds = raw_ds.shuffle(buffer_size=10000)
-
-  # Create a dictionary describing the features.
-  def _parse_fn_(example_proto):
-    feature_description = {
-        'y': tf.io.FixedLenFeature([], tf.int64),
-        'x': tf.io.FixedLenFeature([], tf.string), 
-    }
-    parsed_ex = tf.io.parse_single_example(example_proto, feature_description)
-    return {
-      "x": tf.io.parse_tensor(parsed_ex["x"], out_type=tf.float32),
-      "y": parsed_ex["y"], 
-    }
-
-  ds = raw_ds.map(_parse_fn_, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-  ds = ds.batch(256).prefetch(buffer_size=tf.data.AUTOTUNE)
-  for raw_record in ds.take(10):
-      print(raw_record["x"].shape, raw_record["x"].dtype)
-      print(raw_record["y"].shape, raw_record["y"].dtype)
-  tfds.benchmark(ds, batch_size=256)
-  
-
 def main(args):
     """
     Trains a new DiT model.
@@ -153,21 +68,13 @@ def main(args):
     torch.cuda.set_device(device)
     print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}, local_batch_size={local_batch_size}. ")
 
-    # Setup a feature folder:
-    if rank == 0:
-        os.makedirs(args.features_path, exist_ok=True)
-        os.makedirs(os.path.join(args.features_path, 'imagenet256_features'), exist_ok=True)
-        os.makedirs(os.path.join(args.features_path, 'imagenet256_labels'), exist_ok=True)
-
     # Create model:
     print("Creating model...")
     f = 8
     assert args.image_size % f == 0, "Image size must be divisible by 8 (for the VAE encoder)."
-    latent_size = args.image_size // f
 
     model_config = OmegaConf.load('configs/autoencoder/autoencoder_kl_32x32x4.yaml')['model']
-    checkpoint_dir = '/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000000.ckpt'
-    sd = torch.load(checkpoint_dir, map_location="cpu")['state_dict']
+    sd = torch.load(args.checkpoint_dir, map_location="cpu")['state_dict']
 
     vae = instantiate_from_config(model_config)
     vae.load_state_dict(sd,strict=False)
@@ -200,6 +107,12 @@ def main(args):
         drop_last=True
     )
 
+    # Setup a feature folder:
+    if rank == 0:
+        os.makedirs(args.features_path, exist_ok=True)
+        os.makedirs(os.path.join(args.features_path, 'imagenet256_features'), exist_ok=True)
+        os.makedirs(os.path.join(args.features_path, 'imagenet256_labels'), exist_ok=True)
+
     print("Start training...")
     train_steps = 0
     if dist.get_rank() == 0:  
@@ -207,7 +120,6 @@ def main(args):
     else:
         pbar = loader
     for x, y in pbar:
-        import pdb; pdb.set_trace()
         x = x.to(device)
         y = y.to(device)
         with torch.no_grad():
@@ -230,17 +142,11 @@ if __name__ == "__main__":
     # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", type=str, required=True)
+    parser.add_argument("--checkpoint-dir", type=str, default='/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt')
     parser.add_argument("--features-path", type=str, default="features")
-    # parser.add_argument("--results-dir", type=str, default="results")
-    # parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
-    # parser.add_argument("--num-classes", type=int, default=1000)
-    # parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
-    # parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=4)
-    # parser.add_argument("--log-every", type=int, default=100)
-    # parser.add_argument("--ckpt-every", type=int, default=50_000)
     args = parser.parse_args()
     main(args)

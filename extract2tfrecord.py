@@ -5,7 +5,10 @@
 # LICENSE file in the root directory of this source tree.
 
 """
-A minimal training script for DiT using PyTorch DDP.
+Extract features from a pre-trained VAE and save them to tfrecords.
+example usage:
+    torchrun extract2tfrecord.py --data-path /mnt/disks/vae/.cache/autoencoders/data/ILSVRC2012_train/data --checkpoint-dir /mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt --record-file-path /mnt/disks/vae/epoch2/imagenet256_tfdata_sharded/
+    torchrun extract2tfrecord.py --data-path /mnt/disks/sci/data/imagenet_train/ --checkpoint-dir /mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000001.ckpt --record-file-path data/epoch1/imagenet256_tfdata_sharded/
 """
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
@@ -75,7 +78,6 @@ def main(args):
     print("Creating model...")
     f = 8
     assert args.image_size % f == 0, "Image size must be divisible by 8 (for the VAE encoder)."
-    latent_size = args.image_size // f
 
     model_config = OmegaConf.load('configs/autoencoder/autoencoder_kl_32x32x4.yaml')['model']
     sd = torch.load(args.checkpoint_dir, map_location="cpu")['state_dict']
@@ -183,7 +185,7 @@ def main(args):
 
     # Extract features & Create tfrecords:
     stop = False
-    print("Start training...")
+    print("Start Extraction...")
     train_steps = 0
     if dist.get_rank() == 0:  
         pbar = tqdm.tqdm(loader)
@@ -227,20 +229,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", type=str, default='/mnt/disks/vae/.cache/autoencoders/data/ILSVRC2012_train/data')
     parser.add_argument("--checkpoint-dir", type=str, default='/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt')
-    # parser.add_argument("--features-path", type=str, default="features")
-    # parser.add_argument("--results-dir", type=str, default="results")
-    # parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
+    parser.add_argument("--record-file-path", type=str, default="/mnt/disks/vae/epoch2/imagenet256_tfdata_sharded/")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
-    # parser.add_argument("--num-classes", type=int, default=1000)
-    # parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
-    # parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=4)
-    # parser.add_argument("--log-every", type=int, default=100)
-    # parser.add_argument("--ckpt-every", type=int, default=50_000)
     parser.add_argument("--n-shards", type=int, default=1000)
     parser.add_argument("--min-exs-per-shard", type=int, default=256)
-    parser.add_argument("--record-file-path", type=str, default="/mnt/disks/vae/epoch2/imagenet256_tfdata_sharded/")
     args = parser.parse_args()
     main(args)
