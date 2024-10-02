@@ -104,7 +104,7 @@ def main(args):
         sampler=sampler,
         num_workers=args.num_workers,
         pin_memory=True,
-        drop_last=True
+        drop_last=False
     )
 
     # Setup a feature folder:
@@ -134,8 +134,8 @@ def main(args):
             np.save(
                 f'{args.features_dir}/labels/{feature_id}.npy',
                 y[i:i+1])
-
-            feature_id += 1
+    
+    print(f"Done feature extraction. feature_id=0 ~ {feature_id}")
 
 if __name__ == "__main__":
     # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
