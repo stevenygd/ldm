@@ -110,9 +110,10 @@ def main(args):
                         int(np.ceil(n_batches // n_shards)))
     num_shards = int(np.ceil(n_batches / exs_per_shard))
     assert n_batches - num_shards * exs_per_shard < exs_per_shard
+    print("#examples=%d, #shards=%d, #ex/shard=%d total=%d len(ds)=%s"
+          % (n_batches, num_shards, exs_per_shard, 
+             num_shards * exs_per_shard, len(loader)))
     breakpoint()
-    print("#examples=%d, #shards=%d, #ex/shard=%d"
-          % (n_batches, num_shards, exs_per_shard))
 
     print("Start training...")
     loader_iter = iter(loader)
