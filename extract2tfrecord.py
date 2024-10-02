@@ -36,7 +36,7 @@ import tqdm
 
 from ldm.util import instantiate_from_config
 from omegaconf import OmegaConf, DictConfig
-
+from npy2tfrecord import _bytes_feature, _float_feature, _int64_feature, make_tf_example, benchmark_reading_tf_dataset
 
 def center_crop_arr(pil_image, image_size):
     """
@@ -128,57 +128,57 @@ def main(args):
     print("#examples=%d, #shards=%d, #ex/shard=%d" % (num_images, num_shards, exs_per_shard))
 
     # Define functions for creating tfrecords and benchmarking reading tfrecords (from feature2tfrecord.py):
-    import tensorflow as tf
-    import tensorflow_datasets as tfds
-    def _bytes_feature(value):
-        """Returns a bytes_list from a string / byte."""
-        if isinstance(value, type(tf.constant(0))):
-            value = value.numpy() # BytesList won't unpack a string from an EagerTensor.
-        return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+    # import tensorflow as tf
+    # import tensorflow_datasets as tfds
+    # def _bytes_feature(value):
+    #     """Returns a bytes_list from a string / byte."""
+    #     if isinstance(value, type(tf.constant(0))):
+    #         value = value.numpy() # BytesList won't unpack a string from an EagerTensor.
+    #     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
-    def _float_feature(value):
-        """Returns a float_list from a float / double."""
-        return tf.train.Feature(float_list=tf.train.FloatList(value=value))
+    # def _float_feature(value):
+    #     """Returns a float_list from a float / double."""
+    #     return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
-    def _int64_feature(value):
-        """Returns an int64_list from a bool / enum / int / uint."""
-        return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+    # def _int64_feature(value):
+    #     """Returns an int64_list from a bool / enum / int / uint."""
+    #     return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
-    def make_tf_example(features, label, d, w, h):
-        feature = {
-            'y': _int64_feature(label),
-            "x": _bytes_feature(tf.io.serialize_tensor(features))
-        }
-        return tf.train.Example(features=tf.train.Features(feature=feature))
+    # def make_tf_example(features, label, d, w, h):
+    #     feature = {
+    #         'y': _int64_feature(label),
+    #         "x": _bytes_feature(tf.io.serialize_tensor(features))
+    #     }
+    #     return tf.train.Example(features=tf.train.Features(feature=feature))
 
-    def benchmark_reading_tf_dataset(record_file):
-        """
-            [record_file] is a pattern of <dir_name>/%0.5d-of-%0.5d.tfrecords
-        """
-        files = tf.io.matching_files(record_file)
-        files = tf.random.shuffle(files)
-        shards = tf.data.Dataset.from_tensor_slices(files)
-        raw_ds = shards.interleave(tf.data.TFRecordDataset)
-        raw_ds = raw_ds.shuffle(buffer_size=10000)
+    # def benchmark_reading_tf_dataset(record_file):
+    #     """
+    #         [record_file] is a pattern of <dir_name>/%0.5d-of-%0.5d.tfrecords
+    #     """
+    #     files = tf.io.matching_files(record_file)
+    #     files = tf.random.shuffle(files)
+    #     shards = tf.data.Dataset.from_tensor_slices(files)
+    #     raw_ds = shards.interleave(tf.data.TFRecordDataset)
+    #     raw_ds = raw_ds.shuffle(buffer_size=10000)
 
-        # Create a dictionary describing the features.
-        def _parse_fn_(example_proto):
-            feature_description = {
-                'y': tf.io.FixedLenFeature([], tf.int64),
-                'x': tf.io.FixedLenFeature([], tf.string), 
-            }
-            parsed_ex = tf.io.parse_single_example(example_proto, feature_description)
-            return {
-            "x": tf.io.parse_tensor(parsed_ex["x"], out_type=tf.float32),
-            "y": parsed_ex["y"], 
-            }
+    #     # Create a dictionary describing the features.
+    #     def _parse_fn_(example_proto):
+    #         feature_description = {
+    #             'y': tf.io.FixedLenFeature([], tf.int64),
+    #             'x': tf.io.FixedLenFeature([], tf.string), 
+    #         }
+    #         parsed_ex = tf.io.parse_single_example(example_proto, feature_description)
+    #         return {
+    #         "x": tf.io.parse_tensor(parsed_ex["x"], out_type=tf.float32),
+    #         "y": parsed_ex["y"], 
+    #         }
 
-        ds = raw_ds.map(_parse_fn_, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-        ds = ds.batch(256).prefetch(buffer_size=tf.data.AUTOTUNE)
-        for raw_record in ds.take(10):
-            print(raw_record["x"].shape, raw_record["x"].dtype)
-            print(raw_record["y"].shape, raw_record["y"].dtype)
-        tfds.benchmark(ds, batch_size=256)
+    #     ds = raw_ds.map(_parse_fn_, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    #     ds = ds.batch(256).prefetch(buffer_size=tf.data.AUTOTUNE)
+    #     for raw_record in ds.take(10):
+    #         print(raw_record["x"].shape, raw_record["x"].dtype)
+    #         print(raw_record["y"].shape, raw_record["y"].dtype)
+    #     tfds.benchmark(ds, batch_size=256)
 
     # Extract features:
     print("\nStart Extraction...")

@@ -108,7 +108,6 @@ def main(args):
                 break
         
     recons = np.concatenate(recons, axis=0)
-    import pdb; pdb.set_trace()
     recons = recons[:N]
     print('Reconstructions done: {}'.format(recons.shape))
 
@@ -125,6 +124,7 @@ if __name__ == "__main__":
     parser.add_argument("--features-dir", type=str, default="/mnt/disks/sci/ldm/epoch2/imagenet256_tfdata_sharded/")
     parser.add_argument("--recon-npz-dir", type=str, default="/mnt/disks/sci/ldm/epoch2")
     parser.add_argument("--num-samples", type=int, default=10000)
+    parser.add_argument("--skip-samples", type=int, default=50000)
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--global-batch-size", type=int, default=64)
     parser.add_argument("--global-seed", type=int, default=0)
