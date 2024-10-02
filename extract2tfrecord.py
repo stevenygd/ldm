@@ -5,10 +5,11 @@
 # LICENSE file in the root directory of this source tree.
 
 """
+!!Warning!!: This script still has bugs.
 Extract features from a pre-trained VAE and save them to tfrecords.
 example usage:
-    torchrun extract2tfrecord.py --data-path /mnt/disks/vae/.cache/autoencoders/data/ILSVRC2012_train/data --checkpoint-dir /mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt --record-file-path /mnt/disks/vae/epoch2/imagenet256_tfdata_sharded/
-    torchrun extract2tfrecord.py --data-path /mnt/disks/sci/data/imagenet_train/ --checkpoint-dir /mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000001.ckpt --record-file-path data/epoch1/imagenet256_tfdata_sharded/
+    torchrun extract2tfrecord.py --data-dir /mnt/disks/vae/.cache/autoencoders/data/ILSVRC2012_train/data --checkpoint-path /mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt --record-file-dir /mnt/disks/vae/epoch2/imagenet256_tfdata_sharded/
+    torchrun extract2tfrecord.py --data-dir /mnt/disks/sci/data/imagenet_train/ --checkpoint-path /mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000001.ckpt --record-file-dir /mnt/disks/sci/ldm/epoch1/imagenet256_tfdata_sharded/
 """
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
@@ -75,12 +76,12 @@ def main(args):
     print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}, local_batch_size={local_batch_size}. ")
 
     # Create model:
-    print("Creating model...")
+    print("\nCreating model...")
     f = 8
     assert args.image_size % f == 0, "Image size must be divisible by 8 (for the VAE encoder)."
 
     model_config = OmegaConf.load('configs/autoencoder/autoencoder_kl_32x32x4.yaml')['model']
-    sd = torch.load(args.checkpoint_dir, map_location="cpu")['state_dict']
+    sd = torch.load(args.checkpoint_path, map_location="cpu")['state_dict']
 
     vae = instantiate_from_config(model_config)
     vae.load_state_dict(sd,strict=False)
@@ -88,18 +89,14 @@ def main(args):
     vae.eval()
 
     # Setup data:
-    print("Setting up datatraining...")
+    print("\nSetting up datatraining...")
     transform = transforms.Compose([
         transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
     ])
-    dataset = ImageFolder(args.data_path, transform=transform)
-    
-    ## Shuffle dataset(shuffle=False is not available in this setting):
-    # import random
-    # random.shuffle(dataset.samples)
+    dataset = ImageFolder(args.data_dir, transform=transform)
 
     sampler = DistributedSampler(
         dataset,
@@ -117,19 +114,19 @@ def main(args):
         pin_memory=True,
         drop_last=False
     )
+    
+    # Make record file directory
+    shutil.rmtree(osp.dirname(args.record_file_dir), ignore_errors=True)
+    os.makedirs(osp.dirname(args.record_file_dir))
+    record_file_format = osp.join(args.record_file_dir, "%0.5d-of-%0.5d.tfrecords")
 
-    # Make record file directory: 
-    shutil.rmtree(osp.dirname(args.record_file_path), ignore_errors=True)
-    os.makedirs(osp.dirname(args.record_file_path))
-    record_file_format = osp.join(args.record_file_path, "%0.5d-of-%0.5d.tfrecords")
-
-    # Calculate number of shards and examples per shard:
+    # Calculate number of shards and examples per shard
     num_images = len(dataset)
     exs_per_shard = max(args.min_exs_per_shard, int(np.ceil(num_images // args.n_shards)))
     num_shards = int(np.ceil(num_images // exs_per_shard))
     assert num_images - num_shards * exs_per_shard < exs_per_shard
     print("#examples=%d, #shards=%d, #ex/shard=%d" % (num_images, num_shards, exs_per_shard))
-    
+
     # Define functions for creating tfrecords and benchmarking reading tfrecords (from feature2tfrecord.py):
     import tensorflow as tf
     import tensorflow_datasets as tfds
@@ -183,30 +180,26 @@ def main(args):
             print(raw_record["y"].shape, raw_record["y"].dtype)
         tfds.benchmark(ds, batch_size=256)
 
-    # Extract features & Create tfrecords:
-    stop = False
-    print("Start Extraction...")
-    train_steps = 0
+    # Extract features:
+    print("\nStart Extraction...")
+
+    i = 0
     if dist.get_rank() == 0:  
         pbar = tqdm.tqdm(loader)
     else:
         pbar = loader
     for x, y in pbar:
-        
         x = x.to(device)
-        y = y.to(device)
         with torch.no_grad():
             # Map input images to latent space + normalize latents:
-            x = vae.encode(x).sample().mul_(0.18215)
+            x = vae.encode(x).sample()
+            # for debugging:
+            # x = torch.randn(x.shape[0], 4, 32, 32).to(device)
             
         x = x.detach().cpu().numpy()    # (B, 4, 32, 32)
         y = y.detach().cpu().numpy()    # (B,)
         for i in range(x.shape[0]):
             shard_id = train_steps // exs_per_shard
-            # if shard_id >= num_shards:
-            #     stop=True
-            #     print("Shard finished. Breaking..")
-            #     break
             record_file_sharded = record_file_format % (shard_id, num_shards)
             with tf.io.TFRecordWriter(record_file_sharded) as writer:
                 features = x[i]
@@ -222,14 +215,14 @@ def main(args):
         #     break
 
     # Benchmark reading the tf dataset:
-    benchmark_reading_tf_dataset(osp.join(args.record_file_path, "*.tfrecords"))
+    benchmark_reading_tf_dataset(osp.join(args.record_file_dir, "*.tfrecords"))
 
 if __name__ == "__main__":
     # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-path", type=str, default='/mnt/disks/vae/.cache/autoencoders/data/ILSVRC2012_train/data')
-    parser.add_argument("--checkpoint-dir", type=str, default='/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt')
-    parser.add_argument("--record-file-path", type=str, default="/mnt/disks/vae/epoch2/imagenet256_tfdata_sharded/")
+    parser.add_argument("--data-dir", type=str, default='/mnt/disks/vae/.cache/autoencoders/data/ILSVRC2012_train/data')
+    parser.add_argument("--checkpoint-path", type=str, default='/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt')
+    parser.add_argument("--record-file-dir", type=str, default="/mnt/disks/vae/epoch1/imagenet256_tfdata_sharded/")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)

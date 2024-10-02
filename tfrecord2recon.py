@@ -100,7 +100,6 @@ def main(args):
     with tqdm(total=N, desc="Reconstructing") as pbar:
         for x, _ in dsiter:
             z = torch.from_numpy(x[0].numpy()).to(device)
-            z/=0.18215 #undo normalization
             rec = vae.decode(z)
             recons.append(custom_to_np(rec).numpy())
 

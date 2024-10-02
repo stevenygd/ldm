@@ -21,12 +21,12 @@ if __name__ == "__main__":
 
     f = 8
     # checkpoint_dir = f'models/first_stage_models/kl-f{f}/model.ckpt'
-    checkpoint_dir = '/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000000.ckpt'
+    checkpoint_dir = '/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt'
     model_config = OmegaConf.load('configs/autoencoder/autoencoder_kl_32x32x4.yaml')['model']
 
     N = 10000
     npz_dir = f'/mnt/disks/sci/data/imagenet256_trainset_balanced_{N//1000}k.npz'
-    recon_npz_dir = f'/mnt/disks/vae/imagenet256_recon_{N//1000}k.npz'
+    recon_npz_dir = f'/mnt/disks/sci/ldm/epoch2/imagenet256_balanced_recon_{N//1000}k.npz'
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # model
@@ -55,14 +55,13 @@ if __name__ == "__main__":
 
     recons = []
 
-    batch_size = 16
+    batch_size = 2
     n_batches = len(xs)//batch_size
     for i in tqdm(range(n_batches)):
         start = i*batch_size
         end = min((i+1)*batch_size, len(xs))
 
         x = xs[start:end].to(device)
-        import pdb; pdb.set_trace()
         x_r, _ = model(x)
         x_r = custom_to_np(x_r).numpy()
         
