@@ -30,7 +30,7 @@ def _int64_feature(value):
 
 
 # Create a dictionary with features that may be relevant.
-def make_tf_example(features, label, d, w, h):
+def make_tf_example(features, label):
   feature = {
       'y': _int64_feature(label),
       "x": _bytes_feature(tf.io.serialize_tensor(features))
