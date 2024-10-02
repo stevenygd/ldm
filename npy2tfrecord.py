@@ -57,9 +57,9 @@ def create_tf_record(
     num_shards = int(np.ceil(len(fnames) // exs_per_shard))
     assert len(fnames) - num_shards * exs_per_shard < exs_per_shard
     sharded_fnames = [
-    fnames[i:min(len(fnames), i+exs_per_shard)]
-    for i in range(num_shards)
-    ]
+      fnames[i*num_shards:min(len(fnames), i*num_shards+exs_per_shard)]
+      for i in range(num_shards)
+      ]
     print("#examples=%d, #shards=%d, #ex/shard=%d" 
         % (len(fnames), num_shards, exs_per_shard))
 

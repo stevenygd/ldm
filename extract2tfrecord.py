@@ -118,101 +118,40 @@ def main(args):
     # Make record file directory
     shutil.rmtree(osp.dirname(args.record_file_dir), ignore_errors=True)
     os.makedirs(osp.dirname(args.record_file_dir))
-    record_file_format = osp.join(args.record_file_dir, "%0.5d-of-%0.5d.tfrecords")
+    record_file_format = osp.join(args.record_file_dir, "%0.5d-of-%0.5d.tfrecords") 
 
-    # Calculate number of shards and examples per shard
-    num_images = len(dataset)
-    exs_per_shard = max(args.min_exs_per_shard, int(np.ceil(num_images // args.n_shards)))
-    num_shards = int(np.ceil(num_images // exs_per_shard))
-    assert num_images - num_shards * exs_per_shard < exs_per_shard
-    print("#examples=%d, #shards=%d, #ex/shard=%d" % (num_images, num_shards, exs_per_shard))
-
-    # Define functions for creating tfrecords and benchmarking reading tfrecords (from feature2tfrecord.py):
-    # import tensorflow as tf
-    # import tensorflow_datasets as tfds
-    # def _bytes_feature(value):
-    #     """Returns a bytes_list from a string / byte."""
-    #     if isinstance(value, type(tf.constant(0))):
-    #         value = value.numpy() # BytesList won't unpack a string from an EagerTensor.
-    #     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
-
-    # def _float_feature(value):
-    #     """Returns a float_list from a float / double."""
-    #     return tf.train.Feature(float_list=tf.train.FloatList(value=value))
-
-    # def _int64_feature(value):
-    #     """Returns an int64_list from a bool / enum / int / uint."""
-    #     return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
-
-    # def make_tf_example(features, label, d, w, h):
-    #     feature = {
-    #         'y': _int64_feature(label),
-    #         "x": _bytes_feature(tf.io.serialize_tensor(features))
-    #     }
-    #     return tf.train.Example(features=tf.train.Features(feature=feature))
-
-    # def benchmark_reading_tf_dataset(record_file):
-    #     """
-    #         [record_file] is a pattern of <dir_name>/%0.5d-of-%0.5d.tfrecords
-    #     """
-    #     files = tf.io.matching_files(record_file)
-    #     files = tf.random.shuffle(files)
-    #     shards = tf.data.Dataset.from_tensor_slices(files)
-    #     raw_ds = shards.interleave(tf.data.TFRecordDataset)
-    #     raw_ds = raw_ds.shuffle(buffer_size=10000)
-
-    #     # Create a dictionary describing the features.
-    #     def _parse_fn_(example_proto):
-    #         feature_description = {
-    #             'y': tf.io.FixedLenFeature([], tf.int64),
-    #             'x': tf.io.FixedLenFeature([], tf.string), 
-    #         }
-    #         parsed_ex = tf.io.parse_single_example(example_proto, feature_description)
-    #         return {
-    #         "x": tf.io.parse_tensor(parsed_ex["x"], out_type=tf.float32),
-    #         "y": parsed_ex["y"], 
-    #         }
-
-    #     ds = raw_ds.map(_parse_fn_, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    #     ds = ds.batch(256).prefetch(buffer_size=tf.data.AUTOTUNE)
-    #     for raw_record in ds.take(10):
-    #         print(raw_record["x"].shape, raw_record["x"].dtype)
-    #         print(raw_record["y"].shape, raw_record["y"].dtype)
-    #     tfds.benchmark(ds, batch_size=256)
+    n_batches = len(loader)
+    batch_per_shard = max( int(np.ceil(args.min_exs_per_shard / local_batch_size)), 
+                        int(np.ceil(n_batches // args.n_shards)))
+    num_shards = int(np.ceil(n_batches / batch_per_shard))
+    assert n_batches - num_shards * batch_per_shard < batch_per_shard
+    print("#batches=%d, #shards=%d, #batch/shard=%d" % (n_batches, num_shards, batch_per_shard))
 
     # Extract features:
     print("\nStart Extraction...")
 
-    i = 0
-    if dist.get_rank() == 0:  
-        pbar = tqdm.tqdm(loader)
-    else:
-        pbar = loader
-    for x, y in pbar:
-        x = x.to(device)
-        with torch.no_grad():
-            # Map input images to latent space + normalize latents:
-            x = vae.encode(x).sample()
-            # for debugging:
-            # x = torch.randn(x.shape[0], 4, 32, 32).to(device)
-            
-        x = x.detach().cpu().numpy()    # (B, 4, 32, 32)
-        y = y.detach().cpu().numpy()    # (B,)
-        for i in range(x.shape[0]):
-            shard_id = train_steps // exs_per_shard
-            record_file_sharded = record_file_format % (shard_id, num_shards)
-            with tf.io.TFRecordWriter(record_file_sharded) as writer:
-                features = x[i]
-                d, w, h = features.shape
-                label = y[i]
-                tf_example = make_tf_example(features, label, d, w, h)
-                writer.write(tf_example.SerializeToString())
+    loader_iter = iter(loader)
+    for shard_id in tqdm(range(num_shards)):
+        record_file_sharded = record_file_format % (shard_id, num_shards)
+        with tf.io.TFRecordWriter(record_file_sharded) as writer:
+            for _ in range(batch_per_shard):
+                try:
+                    x, y = next(loader_iter)
+                    x = x.to(device)
+                    with torch.no_grad():
+                        # Map input images to latent space + normalize latents:
+                        x = vae.encode(x).sample()
+                    x = x.detach().cpu().numpy()    # (B, 4, 32, 32)
+                    y = y.detach().cpu().numpy()    # (B,)
+                    
+                    for feature, label in zip(x, y):
+                        d, w, h = feature.shape
+                        tf_example = make_tf_example(feature, label, d, w, h)
+                        writer.write(tf_example.SerializeToString())
 
-            train_steps += 1
-            if train_steps % exs_per_shard == 0:
-                print(f"Shard {shard_id}({exs_per_shard*(shard_id)}-{exs_per_shard*(shard_id+1)-1}) finished.")
-        # if stop:
-        #     break
+                except StopIteration:
+                    break
+                    
 
     # Benchmark reading the tf dataset:
     benchmark_reading_tf_dataset(osp.join(args.record_file_dir, "*.tfrecords"))
@@ -221,7 +160,7 @@ if __name__ == "__main__":
     # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, default='/mnt/disks/vae/.cache/autoencoders/data/ILSVRC2012_train/data')
-    parser.add_argument("--checkpoint-path", type=str, default='/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt')
+    parser.add_argument("--checkpoint-path", type=str, default='/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000001.ckpt')
     parser.add_argument("--record-file-dir", type=str, default="/mnt/disks/vae/epoch1/imagenet256_tfdata_sharded/")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--global-batch-size", type=int, default=256)
