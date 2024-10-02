@@ -105,7 +105,6 @@ def main(args):
     else:
         repeat, shuffle = True, True
     _, dsiter = make_data_loader(dataloader_args, rng=rng, repeat=repeat, shuffle=shuffle) 
-    skip_batch_num = args.skip_samples // args.global_batch_size
 
     # Create model
     model_config = OmegaConf.load('configs/autoencoder/autoencoder_kl_32x32x4.yaml')['model']
@@ -129,7 +128,7 @@ def main(args):
                         class_feat_dict[cls] = []
                     if cls in collected_classes:
                         continue
-                    if len(class_feat_dict[cls]) == num_feat_per_class:
+                    if len(class_feat_dict[cls]) >= num_feat_per_class:
                         collected_classes.add(cls)
                         pbar.update(1)
                         continue
@@ -149,6 +148,7 @@ def main(args):
                 pbar.update(len(z))
 
     else:
+        skip_batch_num = args.skip_samples // args.global_batch_size
         with tqdm(total=N, desc="Reconstructing") as pbar:
             for batch_id, (x, _) in enumerate(dsiter):
                 if batch_id < skip_batch_num:

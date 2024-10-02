@@ -66,19 +66,18 @@ def create_tf_record(
     # TODO: this can be done in parallel 
     features_shape = None
     for shard_id, fnames_shard in tqdm.tqdm(
-    enumerate(sharded_fnames), total=num_shards): 
-        record_file_sharded = record_file % (shard_id, num_shards)
-        print(record_file_sharded)
-    with tf.io.TFRecordWriter(record_file_sharded) as writer:
-        for fname in tqdm.tqdm(fnames_shard, leave=False):
-            feature_file = osp.join(features_dir, "features", fname)
-            features = np.load(feature_file)[0]
-            features_shape = features.shape
-            d, w, h = features_shape
-            label_file = osp.join(features_dir, "labels", fname)
-            label = np.load(label_file)[0]
-            tf_example = make_tf_example(features, label, d, w, h)
-            writer.write(tf_example.SerializeToString())
+      enumerate(sharded_fnames), total=num_shards): 
+        record_file_sharded = record_file_format % (shard_id, num_shards)
+        with tf.io.TFRecordWriter(record_file_sharded) as writer:
+            for fname in tqdm.tqdm(fnames_shard, leave=False):
+                feature_file = osp.join(features_dir, "features", fname)
+                features = np.load(feature_file)[0]
+                features_shape = features.shape
+                d, w, h = features_shape
+                label_file = osp.join(features_dir, "labels", fname)
+                label = np.load(label_file)[0]
+                tf_example = make_tf_example(features, label, d, w, h)
+                writer.write(tf_example.SerializeToString())
 
 
 def benchmark_reading_tf_dataset(record_file):
