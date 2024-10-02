@@ -90,8 +90,7 @@ def main(args):
     loader = DataLoader(
         dataset,
         batch_size = local_batch_size,
-        shuffle=False,
-        # sampler=sampler,
+        shuffle=True,
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=False
@@ -111,6 +110,7 @@ def main(args):
                         int(np.ceil(n_batches // n_shards)))
     num_shards = int(np.ceil(n_batches / exs_per_shard))
     assert n_batches - num_shards * exs_per_shard < exs_per_shard
+    breakpoint()
     print("#examples=%d, #shards=%d, #ex/shard=%d"
           % (n_batches, num_shards, exs_per_shard))
 
