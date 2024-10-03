@@ -3,12 +3,14 @@ import os.path as osp
 import numpy as np
 from tqdm import tqdm
 import torch
+from PIL import Image
 from torch.utils.data import TensorDataset, DataLoader
 from omegaconf import OmegaConf
 from ldm.util import instantiate_from_config
 from scripts.sample_diffusion import custom_to_np
 
 BUCKET_DIR = "/mnt/disks/sci/checkpoints/"
+LOCAL_DIR = "/mnt/sdb/ldm/checkpoints/"
 
 def get_inout_dir(expr_name, ckpt_step, args):
 
@@ -32,11 +34,13 @@ def get_inout_dir(expr_name, ckpt_step, args):
     out_npz_folder = osp.join(BUCKET_DIR, expr_name, "samples", str(ckpt_step))
     if not os.path.exists(out_npz_folder):
         os.makedirs(out_npz_folder, exist_ok=True)
+    out_npz_path = osp.join(out_npz_folder, f"{file_name}.npz")
 
-    out_npz_path = osp.join(
-        out_npz_folder, f"{file_name}.npz"
-    )
-    return in_npy_path, out_npz_path
+    out_img_folder = osp.join(LOCAL_DIR, expr_name, "samples", str(ckpt_step), file_name)
+    if not os.path.exists(out_img_folder):
+        os.makedirs(out_img_folder, exist_ok=True)
+    
+    return (in_npy_path, out_npz_path, out_img_folder)
 
 def main(args):
 
@@ -53,23 +57,26 @@ def main(args):
     })
 
     if int(args.resume_step) < 0:
-        ckpt_steps = os.listdir(osp.join(BUCKET_DIR, expr_name, 'checkpoints'))
+        ckpt_steps = [ckpt for ckpt in os.listdir(osp.join(BUCKET_DIR, expr_name, 'checkpoints')) if ckpt.isdigit()]
+        ckpt_steps = sorted(ckpt_steps, key=lambda x: -int(x))
+        print(f"This run will iterate over {len(ckpt_steps)} checkpoints: {ckpt_steps}")
     else:
         ckpt_steps = [str(args.resume_step)]
+        print(f"This run will decode for single checkpoint: {str(args.resume_step)}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     for ckpt_step in ckpt_steps:
         print(f"\n\n---- Processing {expr_name} at {ckpt_step} ----")
          
-        in_npy_path, out_npz_path = get_inout_dir(expr_name, ckpt_step, expr_config)
-        if not in_npy_path:
+        dirs = get_inout_dir(expr_name, ckpt_step, expr_config)
+        if not dirs:
             print(f"---- Features not found for {expr_name} at {ckpt_step} ----")
             continue
+        in_npy_path, out_npz_path, out_img_folder = dirs
         if osp.isfile(out_npz_path):
             saved_npz = np.load(out_npz_path)['arr_0']
             if saved_npz.shape == (args.num_samples, args.image_size, args.image_size, 3):
                 print(f"---- Already reconstructed: {out_npz_path} ----")
-                continue
             else:
                 print(f"{out_npz_path} exists but shape is {saved_npz.shape}, deleting...")
                 os.remove(out_npz_path)
@@ -99,11 +106,15 @@ def main(args):
 
         # reconstruct
         recons = []
+        i = 0
         for (z,) in tqdm(dataloader):
             z = z.to(device)
             x_r = model.decode(z) # (batch_size, 3, 256, 256), (-1, 1) torch.float32
             x_r = custom_to_np(x_r).numpy() # (batch_size, 256, 256, 3) (0, 255) np.uint8
             recons.append(x_r)
+            for img in x_r:
+                Image.fromarray(img).save(osp.join(out_img_folder, f"pid0-{i:06d}.png"))
+                i += 1
         recons = np.concatenate(recons, axis=0)
         print('Reconstructions done: {}'.format(recons.shape))
 
