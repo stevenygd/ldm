@@ -117,7 +117,7 @@ def main(args):
     # Reconstruct
     recons = []
     if args.balanced:
-      
+        sampmode='balanced'
         num_feat_per_class = N // 1000 # Sample N/1000 features from each class
         collected_classes = set() # To keep track of classes that have been collected
         class_feat_dict = {}
@@ -148,6 +148,7 @@ def main(args):
                 pbar.update(len(z))
 
     else:
+        sampmode='uniformsamp'
         skip_batch_num = args.skip_samples // args.global_batch_size
         with tqdm(total=N, desc="Reconstructing") as pbar:
             for batch_id, (x, _) in enumerate(dsiter):
@@ -166,7 +167,7 @@ def main(args):
     recons = recons[:N]
     print('Reconstructions done: {}'.format(recons.shape))
     
-    npz_file_path = osp.join(args.recon_npz_dir, f'imagenet{args.image_size}_uniformsamp_recon_{N//1000}k.npz')
+    npz_file_path = osp.join(args.recon_npz_dir, f'imagenet{args.image_size}_{sampmode}_recon_{N//1000}k.npz')
     np.savez(npz_file_path, arr_0=recons)
     print(f'Reconstructions saved to {npz_file_path}')
 
@@ -175,7 +176,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint-dir", type=str, default='/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt')
-    parser.add_argument("--features-dir", type=str, default="/mnt/disks/sci/ldm/epoch2/imagenet256_tfdata_sharded/")
+    parser.add_argument("--features-dir", type=str, default="/mnt/disks/sci/ldm/epoch2/imagenet256_tfdata_sharded-v2/")
     parser.add_argument("--recon-npz-dir", type=str, default="/mnt/disks/sci/ldm/epoch2")
     parser.add_argument("--balanced", action="store_true")
     parser.add_argument("--num-samples", type=int, default=10000)
