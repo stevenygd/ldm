@@ -77,6 +77,7 @@ def main(args):
             saved_npz = np.load(out_npz_path)['arr_0']
             if saved_npz.shape == (args.num_samples, args.image_size, args.image_size, 3):
                 print(f"---- Already reconstructed: {out_npz_path} ----")
+                continue
             else:
                 print(f"{out_npz_path} exists but shape is {saved_npz.shape}, deleting...")
                 os.remove(out_npz_path)
