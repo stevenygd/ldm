@@ -12,7 +12,7 @@ from scripts.sample_diffusion import custom_to_np
 BUCKET_DIR = "/mnt/disks/sci/checkpoints/"
 LOCAL_DIR = "/mnt/sdb/ldm/checkpoints/"
 
-def get_inout_dir(expr_name, ckpt_step, args):
+def get_inout_dir(expr_name, ckpt_step, args, save_images=False):
 
     model_string_name = OmegaConf.load(osp.join(BUCKET_DIR, expr_name, "config.yaml")).model.name.replace("/", "-")
     file_name = f"{model_string_name}-"\
@@ -35,9 +35,9 @@ def get_inout_dir(expr_name, ckpt_step, args):
     if not os.path.exists(out_npz_folder):
         os.makedirs(out_npz_folder, exist_ok=True)
     out_npz_path = osp.join(out_npz_folder, f"{file_name}.npz")
-
+    
     out_img_folder = osp.join(LOCAL_DIR, expr_name, "samples", str(ckpt_step), file_name)
-    if not os.path.exists(out_img_folder):
+    if not os.path.exists(out_img_folder) and save_images:
         os.makedirs(out_img_folder, exist_ok=True)
     
     return (in_npy_path, out_npz_path, out_img_folder)
@@ -55,7 +55,6 @@ def main(args):
         "image_size": args.image_size,
         "global_seed": args.global_seed
     })
-
     if int(args.resume_step) < 0:
         ckpt_steps = [ckpt for ckpt in os.listdir(osp.join(BUCKET_DIR, expr_name, 'checkpoints')) if ckpt.isdigit()]
         ckpt_steps = sorted(ckpt_steps, key=lambda x: -int(x))
@@ -68,7 +67,7 @@ def main(args):
     for ckpt_step in ckpt_steps:
         print(f"\n\n---- Processing {expr_name} at {ckpt_step} ----")
          
-        dirs = get_inout_dir(expr_name, ckpt_step, expr_config)
+        dirs = get_inout_dir(expr_name, ckpt_step, expr_config, save_images=args.save_images)
         if not dirs:
             print(f"---- Features not found for {expr_name} at {ckpt_step} ----")
             continue
@@ -113,9 +112,10 @@ def main(args):
             x_r = model.decode(z) # (batch_size, 3, 256, 256), (-1, 1) torch.float32
             x_r = custom_to_np(x_r).numpy() # (batch_size, 256, 256, 3) (0, 255) np.uint8
             recons.append(x_r)
-            for img in x_r:
-                Image.fromarray(img).save(osp.join(out_img_folder, f"pid0-{i:06d}.png"))
-                i += 1
+            if args.save_images:
+                for img in x_r:
+                    Image.fromarray(img).save(osp.join(out_img_folder, f"pid0-{i:06d}.png"))
+                    i += 1
         recons = np.concatenate(recons, axis=0)
         print('Reconstructions done: {}'.format(recons.shape))
 
@@ -130,6 +130,8 @@ if __name__ == "__main__":
     parser.add_argument("--expr-name", type=str, required=True)
     parser.add_argument("--resume-step", type=str, default="-1")
     parser.add_argument("--batch-size", type=int, default=256)
+    
+    parser.add_argument("--save-images", action="store_true")
 
     parser.add_argument("--cfg-scale", type=float, default=1.0)
     parser.add_argument("--num-samples", type=int, default=10000)
