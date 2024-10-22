@@ -1,11 +1,15 @@
 import argparse, os, sys, datetime, glob, importlib, csv
+import os.path as osp
 import numpy as np
 import time
 from tqdm import tqdm
 import torch
+import torch.nn as nn
 from omegaconf import OmegaConf
 from ldm.util import instantiate_from_config
 from scripts.sample_diffusion import custom_to_pil, custom_to_np
+
+BUCKET_MNT = '/mnt/sdb/gs2/outputs'
 
 def custom_to_torch(img, device='cuda'):
     x = np.array(img)[None, ...]
@@ -19,14 +23,20 @@ if __name__ == "__main__":
     now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     sys.path.append(os.getcwd())
 
-    f = 8
-    # checkpoint_dir = f'models/first_stage_models/kl-f{f}/model.ckpt'
-    checkpoint_dir = '/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt'
-    model_config = OmegaConf.load('configs/autoencoder/autoencoder_kl_32x32x4.yaml')['model']
+    f = 32
+    checkpoint_dir = f'models/first_stage_models/kl-f{f}/model.ckpt'
+    # checkpoint_dir = '/mnt/disks/sci/ldm/logs/2024-09-29T04-01-24_autoencoder_kl_32x32x4/checkpoints/epoch=000002.ckpt'
+
+    # model_config = OmegaConf.load('configs/autoencoder/autoencoder_kl_32x32x4.yaml')['model']
+    # model_config = OmegaConf.load(f'configs/autoencoder/autoencoder_kl_16x16x16.yaml')['model']
+    model_config = OmegaConf.load(f'configs/autoencoder/autoencoder_kl_8x8x64.yaml')['model']
 
     N = 10000
-    npz_dir = f'/mnt/disks/sci/data/imagenet256_trainset_balanced_{N//1000}k.npz'
-    recon_npz_dir = f'/mnt/disks/sci/ldm/epoch2/imagenet256_balanced_recon_{N//1000}k.npz'
+    # npz_dir = f'/mnt/disks/sci/data/imagenet256_trainset_balanced_{N//1000}k.npz'
+    # recon_npz_dir = f'/mnt/disks/sci/ldm/epoch2/imagenet256_balanced_recon_{N//1000}k.npz'
+    image_size = 256
+    npz_dir = osp.join(BUCKET_MNT, f'pexels/pexel{image_size}_20cls_{N//1000}k.npz')
+    recon_npz_dir = osp.join(BUCKET_MNT, f'pexels/ldmf{f}/pexel{image_size}_20cls_{N//1000}k_recon.npz')
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # model
@@ -55,7 +65,7 @@ if __name__ == "__main__":
 
     recons = []
 
-    batch_size = 2
+    batch_size = 1
     n_batches = len(xs)//batch_size
     for i in tqdm(range(n_batches)):
         start = i*batch_size
